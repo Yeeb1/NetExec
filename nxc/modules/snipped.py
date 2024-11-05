@@ -1,9 +1,10 @@
-from impacket import smb, smb3
 import ntpath
-from os import makedirs
+import os
+from impacket import smb, smb3
 from os.path import join, exists
 from dploot.lib.smb import DPLootSMBConnection
-from dploot.lib.target import Target
+from dploot.lib.target import Target  
+from nxc.paths import NXC_PATH
 
 class NXCModule:
 
@@ -29,32 +30,36 @@ class NXCModule:
         self.context = context
         self.connection = connection
         self.share = "C$"
-        
-        host = f"{connection.hostname}.{connection.domain}"
-        domain = connection.domain
-        username = connection.username
-        kerberos = connection.kerberos
-        aesKey = connection.aesKey
-        use_kcache = getattr(connection, "use_kcache", False)
-        password = getattr(connection, "password", "")
-        lmhash = getattr(connection, "lmhash", "")
-        nthash = getattr(connection, "nthash", "")
+
+        self.hostname = connection.hostname
+        self.domain = connection.domain
+        self.username = connection.username
+        self.password = getattr(connection, "password", "")
+        self.host = connection.host
+        self.kerberos = connection.kerberos
+        self.lmhash = getattr(connection, "lmhash", "")
+        self.nthash = getattr(connection, "nthash", "")
+        self.aesKey = connection.aesKey
+        self.use_kcache = getattr(connection, "use_kcache", False)
 
         target = Target.create(
-            domain=domain,
-            username=username,
-            password=password,
-            target=host,
-            lmhash=lmhash,
-            nthash=nthash,
-            do_kerberos=kerberos,
-            aesKey=aesKey,
-            use_kcache=use_kcache,
+            domain=self.domain,
+            username=self.username,
+            password=self.password,
+            target=self.hostname + "." + self.domain if self.kerberos else self.host,
+            lmhash=self.lmhash,
+            nthash=self.nthash,
+            do_kerberos=self.kerberos,
+            aesKey=self.aesKey,
+            no_pass=True,
+            use_kcache=self.use_kcache,
         )
 
         dploot_conn = self.upgrade_connection(target=target, connection=connection.conn)
 
-        output_path = f"nxc_snipped_{connection.host}"
+        output_base_dir = join(NXC_PATH, "modules", "snipped", "screenshots")
+        os.makedirs(output_base_dir, exist_ok=True)
+
         context.log.debug("Getting all user folders")
         try:
             user_folders = dploot_conn.listPath(self.share, "\\Users\\*")
@@ -89,17 +94,18 @@ class NXCModule:
                 context.log.debug(f"No screenshots found in {screenshot_path} for user {folder_name}")
                 continue
 
-            user_output_dir = join(output_path, folder_name)
-            if not exists(user_output_dir):
-                makedirs(user_output_dir)
+            user_output_dir = join(output_base_dir, folder_name)
+            os.makedirs(user_output_dir, exist_ok=True)
 
             context.log.display(f"Downloading screenshots for user {folder_name}")
             downloaded_count = 0
             for file in screenshot_files:
                 if file.is_directory():
                     continue
-                remote_file_path = ntpath.join(screenshot_path, file.get_longname())
-                local_file_path = join(user_output_dir, file.get_longname())
+                remote_file_name = file.get_longname()
+                local_file_name = f"{self.hostname}_{remote_file_name}"
+                remote_file_path = ntpath.join(screenshot_path, remote_file_name)
+                local_file_path = join(user_output_dir, local_file_name)
                 with open(local_file_path, 'wb') as local_file:
                     try:
                         context.log.debug(f"Downloading {remote_file_path} to {local_file_path}")
